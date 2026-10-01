@@ -1,0 +1,97 @@
+# ==============================================================================
+# GeoIP2 Module Configuration (Place in /etc/nginx/nginx.conf inside http { ... })
+# ==============================================================================
+# geoip2 /usr/share/GeoIP/GeoLite2-Country.mmdb {
+#     auto_reload 60m;
+#     $geoip2_data_country_code default=XX source=$remote_addr country iso_code;
+# }
+#
+# map $geoip2_data_country_code $blocked_country {
+#     default 0;
+#     RU 1;
+#     BY 1;
+# }
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name example.com www.example.com;
+
+    # Redirect all HTTP traffic to HTTPS (recommended for production)
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name example.com www.example.com;
+
+    # SSL Certificates (Let's Encrypt / Certbot path example)
+    # ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+
+    # Document Root MUST point to the /public directory
+    root /var/www/lovesua/public;
+    index index.php index.html;
+
+    charset utf-8;
+
+    # 1. Block access from Russian Federation & Belarus via Cloudflare header
+    if ($http_cf_ipcountry ~* "^(RU|BY)$") {
+        return 403;
+    }
+
+    # 2. Block access from Russian Federation & Belarus via Nginx GeoIP2 module
+    # if ($blocked_country = 1) {
+    #     return 403;
+    # }
+
+    # Maximum file upload size (needed for high-res photo uploads)
+    client_max_body_size 50M;
+
+    # Security Headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Logging
+    access_log /var/log/nginx/lovesua_access.log;
+    error_log  /var/log/nginx/lovesua_error.log error;
+
+    # Main routing handler
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt  { access_log off; log_not_found off; }
+
+    error_page 404 /index.php;
+
+    # PHP-FPM processing
+    location ~ \.php$ {
+        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+        # For PHP 8.3 use: fastcgi_pass unix:/var/run/php/php8.3-fpm.sock;
+        # For PHP 8.4 use: fastcgi_pass unix:/var/run/php/php8.4-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_hide_header X-Powered-By;
+        fastcgi_buffer_size 16k;
+        fastcgi_buffers 4 16k;
+    }
+
+    # Static Assets Caching (Vite build assets have immutable hashes)
+    location ~* \.(?:css|js|woff2?|ttf|eot|svg|png|jpg|jpeg|gif|webp|ico)$ {
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        access_log off;
+        try_files $uri =404;
+    }
+
+    # Deny access to hidden files (.env, .git, etc.)
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}
+
